@@ -11,6 +11,7 @@ export async function register() {
 
   const run = () => runAlertCheck().catch((err) => console.error("Scheduled alert check failed", err));
   // Don't keep the process alive just for the timer.
+  console.info(`Alert checks scheduled every ${minutes} min`);
   setInterval(run, minutes * 60_000).unref();
   setTimeout(run, 30_000).unref();
 }

@@ -165,10 +165,12 @@ let running: Promise<void> | null = null;
 export function runAlertCheck(): Promise<void> {
   if (!alertsConfigured) return Promise.resolve();
   running ??= (async () => {
+    const started = Date.now();
     const places = await loadPlaces();
     const expired = new Set<string>();
     await checkThreats(places, expired);
     await checkReports(places, expired);
+    console.info(`Alert check: ${places.length} places, ${expired.size} expired subscriptions, ${Date.now() - started} ms`);
   })().finally(() => (running = null));
   return running;
 }
