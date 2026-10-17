@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "floodguard", "runtimeExecutable": "npm", "runtimeArgs": ["run", "start"], "port": 3000 },
+    { "name": "floodguard-3001", "runtimeExecutable": "npx", "runtimeArgs": ["next", "start", "-p", "3001"], "port": 3001 }
+  ]
+}

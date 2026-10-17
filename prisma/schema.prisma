@@ -1,0 +1,108 @@
+// FloodGuard database (Azure Database for PostgreSQL). Photos live in Blob Storage;
+// this holds report details and everything flood alerts need.
+// Change it with `npm run db:migrate:dev -- --name <change>`, apply with `npm run db:migrate`.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LocationSource {
+  photo
+  device
+}
+
+enum Moderation {
+  approved
+  rejected
+  pending
+}
+
+enum AlertLevel {
+  low
+  moderate
+  high
+  severe
+}
+
+/// "last": the subscriber's last shared position (one per subscription). "saved": a place they pinned.
+enum PlaceKind {
+  last
+  saved
+}
+
+enum AlertKind {
+  threat
+  report
+}
+
+model Report {
+  id               String         @id @db.Uuid
+  /// `<YYYY-MM-DD>/<uuid>.<ext>`, the blob name under `pending/` and the photo URL path.
+  photoKey         String         @unique @map("photo_key")
+  latitude         Float
+  longitude        Float
+  accuracy         Float?         @db.Real
+  note             String         @default("")
+  submittedAt      DateTime       @map("submitted_at") @db.Timestamptz(3)
+  locationSource   LocationSource @map("location_source")
+  /// Camera wall-clock time from EXIF, "YYYY-MM-DDTHH:MM:SS" (no time zone).
+  takenAt          String?        @map("taken_at")
+  moderation       Moderation
+  moderationReason String         @default("") @map("moderation_reason")
+
+  @@index([submittedAt(sort: Desc)])
+  @@index([moderation, submittedAt])
+  @@map("reports")
+}
+
+model PushSubscription {
+  id         String       @id @default(uuid()) @db.Uuid
+  endpoint   String       @unique
+  p256dh     String
+  auth       String
+  minLevel   AlertLevel   @default(moderate) @map("min_level")
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt DateTime     @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  places     AlertPlace[]
+
+  @@map("push_subscriptions")
+}
+
+model AlertPlace {
+  id             String           @id @default(uuid()) @db.Uuid
+  subscriptionId String           @map("subscription_id") @db.Uuid
+  subscription   PushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  kind           PlaceKind
+  /// Empty for the "last" place, so the unique key below allows only one of those.
+  label          String
+  latitude       Float
+  longitude      Float
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// When the position was last set (not bumped by alert bookkeeping).
+  locatedAt      DateTime         @default(now()) @map("located_at") @db.Timestamptz(3)
+  /// Highest threat level already announced here, so the same warning isn't repeated.
+  notifiedLevel  AlertLevel?      @map("notified_level")
+  notifiedAt     DateTime?        @map("notified_at") @db.Timestamptz(3)
+  alerts         AlertSent[]
+
+  @@unique([subscriptionId, kind, label])
+  @@map("alert_places")
+}
+
+model AlertSent {
+  id      BigInt     @id @default(autoincrement())
+  placeId String     @map("place_id") @db.Uuid
+  place   AlertPlace @relation(fields: [placeId], references: [id], onDelete: Cascade)
+  kind    AlertKind
+  /// Report id, or "<level>:<time>" for threat alerts.
+  ref     String
+  sentAt  DateTime   @default(now()) @map("sent_at") @db.Timestamptz(3)
+
+  @@unique([placeId, kind, ref])
+  @@map("alerts_sent")
+}
