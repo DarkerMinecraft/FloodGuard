@@ -1,4 +1,4 @@
-import { parseLatLng } from "@/lib/geo";
+import { parseLatLng, type Ring } from "@/lib/geo";
 import { rateLimiter } from "@/lib/rate-limit";
 import { nearbyReports, NEARBY_RADIUS_KM, REPORT_MAX_AGE_HOURS } from "@/lib/reports";
 import { assessThreat } from "@/lib/threat";
@@ -34,6 +34,15 @@ function publicOrigin(request: Request): string {
   return `${proto}://${host}`;
 }
 
+/** GeoJSON MultiPolygon ([longitude, latitude], closed rings) for the flood areas; null when there are none. */
+function toGeoJson(areas: Ring[]) {
+  if (!areas.length) return null;
+  return {
+    type: "MultiPolygon" as const,
+    coordinates: areas.map((ring) => [[...ring, ring[0]].map(([lat, lng]) => [lng, lat])]),
+  };
+}
+
 export function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
@@ -65,8 +74,9 @@ export async function GET(request: Request) {
               summary: threat.value.summary,
               factors: threat.value.factors,
               confidence: threat.value.confidence,
-              // [south, west, north, east] of the area the estimate covers.
-              area: threat.value.bbox,
+              // The likely flooded areas as GeoJSON, and [south, west, north, east] around them.
+              area: toGeoJson(threat.value.areas),
+              bounds: threat.value.bbox,
               source: threat.value.source,
               basis: threat.value.basis,
               generatedAt: threat.value.generatedAt,
@@ -85,6 +95,8 @@ export async function GET(request: Request) {
                 note: r.note,
                 submittedAt: r.submittedAt,
                 takenAt: r.takenAt,
+                // What Gemini saw in the photo: depth, extent, hazards, description; null until analysed.
+                photoAnalysis: r.analysis,
                 photoUrl: new URL(r.photoUrl, origin).href,
               })),
             }

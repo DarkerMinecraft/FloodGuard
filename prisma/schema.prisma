@@ -54,6 +54,8 @@ model Report {
   takenAt          String?        @map("taken_at")
   moderation       Moderation
   moderationReason String         @default("") @map("moderation_reason")
+  /// Gemini's description of the flooding in the photo (lib/moderation.ts PhotoAnalysis); null until analysed.
+  photoAnalysis    Json?          @map("photo_analysis")
 
   @@index([submittedAt(sort: Desc)])
   @@index([moderation, submittedAt])

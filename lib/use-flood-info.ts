@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { BBox } from "@/lib/geo";
+import type { BBox, Ring } from "@/lib/geo";
 import type { Coordinates } from "@/lib/use-location";
 
 // Mirrors the API responses (lib/threat.ts, lib/reports.ts are server-only).
@@ -13,7 +13,10 @@ export type Threat = {
   summary: string;
   factors: string[];
   confidence: "low" | "medium" | "high";
-  bbox: BBox;
+  /** Outlines of the likely flooded areas; empty when the level is "none". */
+  areas: Ring[];
+  /** Bounds around all the areas; null when there are none. */
+  bbox: BBox | null;
   source: "gemma" | "rules";
   basis: "photos" | "photos+environment";
   generatedAt: string;

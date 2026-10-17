@@ -3,8 +3,8 @@ import "server-only";
 import * as blobs from "@/lib/azure-storage";
 import type { ReportPhoto, StoredReport } from "@/lib/azure-storage";
 import { db, dbConfigured } from "@/lib/db";
-import type { Report } from "@/lib/generated/prisma/client";
-import type { ModerationStatus } from "@/lib/moderation";
+import { Prisma, type Report } from "@/lib/generated/prisma/client";
+import { parsePhotoAnalysis, type ModerationStatus, type PhotoAnalysis } from "@/lib/moderation";
 
 // Report records. Photos always live in Blob Storage; with Postgres configured the
 // report details are also kept there and read from there (fast filtered queries
@@ -23,6 +23,7 @@ const fromRow = (r: Report): StoredReport => ({
   locationSource: r.locationSource,
   takenAt: r.takenAt,
   moderation: r.moderation,
+  analysis: parsePhotoAnalysis(r.photoAnalysis),
 });
 
 const idOf = (key: string) => key.split("/")[1].split(".")[0];
@@ -51,6 +52,7 @@ export async function saveReport(photo: ReportPhoto): Promise<{ id: string; key:
         takenAt: photo.takenAt,
         moderation: photo.moderation.status,
         moderationReason: photo.moderation.reason.slice(0, 200),
+        ...(photo.analysis && { photoAnalysis: photo.analysis }),
       },
     });
   }
@@ -69,13 +71,19 @@ export async function listRecentReports(days: number | null): Promise<StoredRepo
 }
 
 /** Records a (re-)moderation result in both places. */
-export async function setReportModeration(key: string, status: ModerationStatus, reason: string, note: string): Promise<void> {
-  await blobs.setReportModeration(key, status, reason, note);
+export async function setReportModeration(
+  key: string,
+  status: ModerationStatus,
+  reason: string,
+  note: string,
+  analysis: PhotoAnalysis | null,
+): Promise<void> {
+  await blobs.setReportModeration(key, status, reason, note, analysis);
   if (dbConfigured) {
     await ready();
     await db().report.updateMany({
       where: { photoKey: key },
-      data: { moderation: status, moderationReason: reason.slice(0, 200), note },
+      data: { moderation: status, moderationReason: reason.slice(0, 200), note, photoAnalysis: analysis ?? Prisma.DbNull },
     });
   }
 }
@@ -108,6 +116,7 @@ async function backfillReportsFromBlobs(): Promise<void> {
       locationSource: r.locationSource,
       takenAt: r.takenAt,
       moderation: r.moderation,
+      ...(r.analysis && { photoAnalysis: r.analysis }),
     })),
     skipDuplicates: true,
   });

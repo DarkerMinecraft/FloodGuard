@@ -2,7 +2,7 @@ import "server-only";
 
 import { DefaultAzureCredential } from "@azure/identity";
 import { BlobServiceClient, type ContainerClient } from "@azure/storage-blob";
-import type { ModerationStatus } from "@/lib/moderation";
+import { parsePhotoAnalysis, type ModerationStatus, type PhotoAnalysis } from "@/lib/moderation";
 
 // Auth is Entra ID only (shared-key access is disabled on the account):
 // locally DefaultAzureCredential uses your `az login`; in Azure, give the app a
@@ -34,6 +34,8 @@ export type ReportPhoto = {
   takenAt: string | null;
   note: string;
   moderation: { status: ModerationStatus; reason: string };
+  /** Gemini's description of the flooding (approved photos). */
+  analysis: PhotoAnalysis | null;
 };
 
 // Blob metadata must be ASCII, so free text is URI-encoded.
@@ -43,6 +45,14 @@ function decodeMeta(value: string | undefined): string {
     return value ? decodeURIComponent(value) : "";
   } catch {
     return ""; // malformed encoding
+  }
+}
+
+function analysisOf(meta: Record<string, string>): PhotoAnalysis | null {
+  try {
+    return meta.analysis ? parsePhotoAnalysis(JSON.parse(decodeMeta(meta.analysis))) : null;
+  } catch {
+    return null; // malformed JSON
   }
 }
 
@@ -74,6 +84,7 @@ export async function uploadReportPhoto(photo: ReportPhoto): Promise<{ id: strin
         ...(photo.takenAt && { takenat: photo.takenAt }),
         moderation: photo.moderation.status,
         moderationreason: encodeMeta(photo.moderation.reason),
+        ...(photo.analysis && { analysis: encodeMeta(JSON.stringify(photo.analysis)) }),
       },
       // Never overwrite an existing blob.
       conditions: { ifNoneMatch: "*" },
@@ -93,6 +104,7 @@ export type StoredReport = {
   locationSource: "photo" | "device";
   takenAt: string | null;
   moderation: ModerationStatus;
+  analysis: PhotoAnalysis | null;
 };
 
 const KEY_PATTERN = /^\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\.(jpg|png|webp)$/;
@@ -129,6 +141,7 @@ export async function listRecentReports(days: number | null = 2): Promise<Stored
         locationSource: meta.locationsource === "photo" ? "photo" : "device",
         takenAt: meta.takenat ?? null,
         moderation: moderationOf(meta),
+        analysis: analysisOf(meta),
       });
     }
   }
@@ -156,13 +169,21 @@ export async function downloadReportPhoto(
 }
 
 /** Records a (re-)moderation result, keeping the rest of the report's metadata. */
-export async function setReportModeration(key: string, status: ModerationStatus, reason: string, note: string): Promise<void> {
+export async function setReportModeration(
+  key: string,
+  status: ModerationStatus,
+  reason: string,
+  note: string,
+  analysis: PhotoAnalysis | null,
+): Promise<void> {
   if (!isReportKey(key)) throw new Error(`Invalid report key: ${key}`);
   const blob = getContainer().getBlockBlobClient(`pending/${key}`);
   const props = await blob.getProperties();
   const metadata: Record<string, string> = { ...props.metadata, moderation: status, moderationreason: encodeMeta(reason.slice(0, 200)) };
   if (note) metadata.note = encodeMeta(note);
   else delete metadata.note;
+  if (analysis) metadata.analysis = encodeMeta(JSON.stringify(analysis));
+  else delete metadata.analysis;
   // ifMatch: don't clobber a concurrent update.
   await blob.setMetadata(metadata, { conditions: { ifMatch: props.etag } });
 }

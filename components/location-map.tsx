@@ -7,7 +7,7 @@ import {
   Circle,
   CircleMarker,
   MapContainer,
-  Rectangle,
+  Polygon,
   TileLayer,
   Tooltip,
   useMap,
@@ -82,17 +82,16 @@ export default function LocationMap({
       <AttributionControl position="topright" prefix={false} />
       {/* Keyed so switching style swaps the layer (and its attribution) cleanly. */}
       <TileLayer key={tiles.url} url={tiles.url} attribution={tiles.attribution} maxZoom={19} />
-      {threat && threat.level !== "none" && (
-        <Rectangle
-          bounds={[
-            [threat.bbox[0], threat.bbox[1]],
-            [threat.bbox[2], threat.bbox[3]],
-          ]}
-          pathOptions={{ color: THREAT_STYLES[threat.level].color, weight: 2, fillOpacity: 0.12, dashArray: "6 4" }}
-        >
-          <Tooltip sticky>{THREAT_STYLES[threat.level].label} flood risk: {threat.headline}</Tooltip>
-        </Rectangle>
-      )}
+      {threat && threat.level !== "none" &&
+        threat.areas.map((ring, i) => (
+          <Polygon
+            key={i}
+            positions={ring}
+            pathOptions={{ color: THREAT_STYLES[threat.level].color, weight: 2, fillOpacity: 0.12, dashArray: "6 4" }}
+          >
+            <Tooltip sticky>{THREAT_STYLES[threat.level].label} flood risk: {threat.headline}</Tooltip>
+          </Polygon>
+        ))}
       {reports.map((r) => (
         <CircleMarker
           key={r.id}

@@ -21,3 +21,17 @@ export function parseLatLng(params: URLSearchParams): { latitude: number; longit
 
 /** [south, west, north, east] */
 export type BBox = [number, number, number, number];
+
+/** [latitude, longitude] */
+export type LatLng = [number, number];
+/** A polygon outline: points in order, not repeating the first. */
+export type Ring = LatLng[];
+
+/** Bounds around all the rings; null when there are none. */
+export function ringsBounds(rings: Ring[]): BBox | null {
+  const points = rings.flat();
+  if (!points.length) return null;
+  const lats = points.map((p) => p[0]);
+  const lngs = points.map((p) => p[1]);
+  return [Math.min(...lats), Math.min(...lngs), Math.max(...lats), Math.max(...lngs)];
+}

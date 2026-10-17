@@ -157,15 +157,17 @@ function ThreatCard({ threat, onShowArea }: { threat: FloodInfo["threat"]; onSho
             ))}
           </ul>
         )}
-        <Button variant="secondary" className="mt-3 h-10 w-full" onClick={onShowArea}>
-          <MapIcon /> Show area on map
-        </Button>
+        {data.bbox && (
+          <Button variant="secondary" className="mt-3 h-10 w-full" onClick={onShowArea}>
+            <MapIcon /> Show area on map
+          </Button>
+        )}
       </CardContent>
       <CardFooter className="text-[11px] leading-4 text-muted-foreground">
         <p>
-          {data.source === "gemma" ? "AI estimate (Gemma 4)" : "Automatic estimate"} from{" "}
+          {data.source === "gemma" ? "AI alert level (Gemma 4)" : "Automatic estimate"} from{" "}
           {data.basis === "photos"
-            ? "flood photos reported by app users"
+            ? "flood photos reported by app users and checked by Gemini"
             : "Open-Meteo river, rain and sea-level forecasts and user reports"}
           , {timeAgo(data.generatedAt)}. Not an official warning.
         </p>

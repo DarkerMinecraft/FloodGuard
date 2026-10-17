@@ -45,6 +45,7 @@ export async function nearbyReports(latitude: number, longitude: number, limit =
       submittedAt: r.submittedAt,
       locationSource: r.locationSource,
       takenAt: r.takenAt,
+      analysis: r.analysis,
       id: r.key.split("/")[1].split(".")[0],
       photoUrl: `/api/reports/photo/${r.key}`,
       distanceKm: Math.round(distanceKm(latitude, longitude, r.latitude, r.longitude) * 10) / 10,
@@ -55,13 +56,19 @@ export async function nearbyReports(latitude: number, longitude: number, limit =
 
 // ---------------------------------------------------------------------------
 // Re-screening: reports stored while the AI check was down (or before moderation
-// existed) are "pending" and hidden. Each listing refresh checks a few of them in
-// the background, so they appear (or stay hidden) without anyone reviewing by hand.
+// existed) are "pending" and hidden, and approved reports from before Gemini photo
+// analysis have no findings. Each listing refresh checks a few of them in the
+// background, so they appear (or stay hidden) without anyone reviewing by hand.
 const RESCREEN_BATCH = 3;
 const inFlight = new Set<string>();
 
 async function rescreenPending(reports: StoredReport[]) {
-  const batch = reports.filter((r) => r.moderation === "pending" && !inFlight.has(r.key)).slice(0, RESCREEN_BATCH);
+  const needsCheck = (r: StoredReport) => r.moderation === "pending" || (r.moderation === "approved" && !r.analysis);
+  // Hidden reports first: they're invisible until checked.
+  const batch = reports
+    .filter((r) => needsCheck(r) && !inFlight.has(r.key))
+    .sort((a, b) => Number(b.moderation === "pending") - Number(a.moderation === "pending"))
+    .slice(0, RESCREEN_BATCH);
   if (!batch.length) return;
 
   let changed = false;
@@ -69,10 +76,10 @@ async function rescreenPending(reports: StoredReport[]) {
     inFlight.add(report.key);
     try {
       const photo = await downloadReportPhoto(report.key);
-      if (!photo || photo.moderation !== "pending") continue;
+      if (!photo || photo.moderation === "rejected") continue;
       const result = await moderateReport({ data: photo.data, contentType: photo.contentType, note: photo.note });
       if (result.status === "pending") break; // AI still unavailable; try again on a later refresh
-      await setReportModeration(report.key, result.status, result.reason, result.note);
+      await setReportModeration(report.key, result.status, result.reason, result.note, result.analysis);
       console.info(`Re-screened report ${report.key}: ${result.status} (${result.reason})`);
       changed = true;
     } catch (err) {

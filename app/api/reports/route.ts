@@ -99,6 +99,7 @@ export async function POST(request: Request) {
       takenAt: exif?.takenAt ?? null,
       note: moderation.note,
       moderation: { status: moderation.status, reason: moderation.reason },
+      analysis: moderation.analysis,
     });
     if (moderation.status === "approved") {
       invalidateReports();
