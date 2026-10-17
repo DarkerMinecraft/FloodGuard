@@ -1,18 +1,27 @@
 # FloodGuard
 
-FloodGuard is a mobile-friendly flood map built with Next.js, React, TypeScript, Leaflet, and Tailwind CSS. It combines nearby community photo reports with Open-Meteo river, rainfall, and sea-level forecasts, and optionally uses Gemma through the Gemini API to estimate local flood risk.
+FloodGuard is a mobile-friendly flood map built with Next.js, React, TypeScript, Leaflet, and Tailwind CSS. It combines nearby community photo reports with Open-Meteo river, rainfall, and sea-level forecasts. Gemini checks report photos and describes visible flooding; Gemma uses those findings and forecasts to estimate local flood risk.
 
 Estimates and community reports are not official emergency warnings. Follow guidance from local emergency services.
 
 ## Features
 
-- Location-aware map with nearby approved reports and a highlighted risk area.
+- Location-aware map with nearby approved reports and flood-area polygons derived from local evidence.
 - Streets, terrain, and satellite tiles with MapTiler; OpenStreetMap tiles when no MapTiler key is supplied.
 - Photo reports positioned using photo GPS metadata or the submitter's device location, with an optional note.
-- Automatic photo and note moderation. Rejected images are not stored; pending reports remain hidden until re-screened.
+- Automatic photo and note moderation, with stored findings on water depth, extent, and visible hazards. Rejected images are not stored; pending reports remain hidden until re-screened.
 - Environmental estimates with a rules fallback when AI is unavailable, plus a photos-only demo mode.
 - Installable PWA with an offline page fallback and optional Web Push alerts for the last shared location and up to five saved places.
 - Private Azure Blob Storage for photos, with optional Azure PostgreSQL storage for report records and alerts.
+- Public JSON API with flood estimates, GeoJSON areas, and nearby report photos for other apps and sites.
+
+## How estimates work
+
+1. Gemini vision screens each uploaded photo and optional note, and records a structured description of visible flooding for approved reports. Findings are stored with the report in blob metadata and, when configured, PostgreSQL.
+2. Gemma makes a text-only risk decision from those findings, report locations and notes, and environmental forecasts. It returns a level (`none`, `low`, `moderate`, `high`, or `severe`) and explanation. If AI is unavailable, built-in rules use the same available evidence.
+3. The app draws up to four flood-area polygons from nearby report locations and elevated river forecasts, grouping nearby evidence and sizing report areas using the observed extent and depth. With rain or sea-level evidence alone, it uses an area around the queried location.
+
+These outlines are approximate evidence-based areas, not measured flood boundaries or a terrain-based inundation model. A `none` estimate has no polygons. Normal mode uses reports submitted in the last 48 hours; photos-only demo mode skips environmental forecasts and includes approved reports of any age.
 
 ## Local setup
 
@@ -40,7 +49,9 @@ See [.env.example](.env.example) for a copyable template. Never commit `.env.loc
 | `AZURE_STORAGE_ACCOUNT_URL` | Blob account URL, e.g. `https://<account>.blob.core.windows.net`. Required for photo uploads and report lookup. |
 | `AZURE_STORAGE_CONTAINER` | Existing private container; defaults to `flood-reports`. |
 | `GEMINI_API_KEY` | Server-only Gemini API key for moderation and AI risk estimates. |
-| `GEMMA_MODEL` | Main model; defaults to `gemma-4-26b-a4b-it`. Your account must have access to the configured model. |
+| `GEMINI_VISION_MODEL` | Photo moderation and analysis model; defaults to `gemini-3.5-flash`. |
+| `GEMINI_VISION_FALLBACK_MODEL` | Photo model tried after transient primary-model failures; defaults to `gemini-3.1-flash-lite`. |
+| `GEMMA_MODEL` | Text-only risk decision model; defaults to `gemma-4-26b-a4b-it`. Your account must have access to the configured models. |
 | `GEMMA_FALLBACK_MODEL` | Model tried after transient main-model failures; defaults to `gemma-4-31b-it`. |
 | `FLOODGUARD_PHOTOS_ONLY` | Set exactly `1` for demo mode: skip environmental forecasts and allow approved photos of any age. Otherwise reports expire from the map after 48 hours. |
 | `PGHOST` | Azure PostgreSQL hostname. Leave empty to use blob metadata without database-backed alerts. |
@@ -91,7 +102,7 @@ Alerts require PostgreSQL, both VAPID keys, browser support, and notification pe
 
 With alerts enabled, the app can save the last shared location while open and check it while closed; it does not track movement in the background. Last positions older than 14 days are ignored. Saved places remain active until removed. Risk alerts respect the selected threshold and can repeat after 12 hours; newly approved reports within 5 km can trigger notifications during their first six hours.
 
-For one always-running server, the built-in timer checks every ten minutes by default. For multiple instances or hosts that suspend idle processes, set `ALERT_CHECK_INTERVAL_MINUTES=0` and schedule one caller:
+For one always-running server, the built-in timer runs an initial check after 30 seconds and then every ten minutes by default. Server logs show the configured interval and each completed full check's place count, expired subscription count, and duration. For multiple instances or hosts that suspend idle processes, set `ALERT_CHECK_INTERVAL_MINUTES=0` and schedule one caller:
 
 ```powershell
 curl.exe -X POST https://<your-host>/api/alerts/run -H "Authorization: Bearer <ALERT_CRON_SECRET>"
@@ -134,6 +145,7 @@ scripts/                Azure-authenticated Prisma wrapper and icon generation
 
 | Route | Purpose |
 | --- | --- |
+| `GET /api/v1/flood?lat=&lng=` | Public JSON API combining a risk estimate, GeoJSON flood areas, and nearby reports; supports cross-origin requests. |
 | `GET /api/threat?lat=&lng=` | Cached risk assessment for a location. |
 | `GET /api/reports?lat=&lng=` | Up to 20 approved reports within 25 km. |
 | `POST /api/reports` | Multipart upload: `photo`, `locationSource` (`photo` or `device`), device `latitude`/`longitude` when needed, optional `accuracy` and `note`. JPEG, PNG, or WebP up to 8 MiB; note up to 500 characters. |
@@ -145,6 +157,22 @@ scripts/                Azure-authenticated Prisma wrapper and icon generation
 | `POST /api/alerts/run` | Run a scheduled check with the cron bearer secret. |
 
 Protected subscription operations use `X-Push-Endpoint` and `X-Push-Auth` headers. Treat these credentials as secrets: they authorize access to saved locations. There are no user accounts or administrative moderation screens.
+
+### Public flood API
+
+No API key is required. For example, with the local server running:
+
+```powershell
+curl.exe "http://localhost:3000/api/v1/flood?lat=36.85&lng=-76.29"
+```
+
+The response contains `location`, `threat`, `reports`, and `disclaimer`:
+
+- `threat` includes the level, headline, summary, factors, confidence, `generatedAt`, `source` (`gemma` or `rules`), and `basis` (`photos` or `photos+environment`). Its `area` is a GeoJSON `MultiPolygon` with closed rings in `[longitude, latitude]` order, or `null` when there are no areas. `bounds` is `[south, west, north, east]`, or `null`.
+- `reports` contains `radiusKm` (25), `maxAgeHours` (48, or `null` in photos-only mode), and up to 20 `items`. Each item includes coordinates, distance, note, timestamps, an absolute `photoUrl`, and `photoAnalysis` (depth, extent, hazards, description, and confidence, or `null` until analysed).
+- If only one upstream operation fails, the response remains HTTP 200 with either `threat` or `reports` set to `null`. Handle these independently. If both fail, the API returns HTTP 502 with an `error` message.
+
+Invalid or missing coordinates return HTTP 400. Requests are limited to 60 per client IP per hour per server instance; HTTP 429 includes `Retry-After: 3600`. Cross-origin access is enabled for `GET` and `OPTIONS`. Successful responses advertise a 60-second public cache lifetime; underlying threat estimates are cached per coordinate cell for 15 minutes, or two minutes for a rules fallback. Use `generatedAt` to judge estimate age. Breaking response changes will use a new API version path.
 
 ## Production and deployment
 
@@ -176,7 +204,7 @@ Configure runtime secrets and managed identity on the hosting platform. The cont
 - Missing report data or completely unavailable environmental data produces an assessment error instead of a reassuring all-clear. Partial data and model mistakes can still miss flooding.
 - The offline fallback caches navigation pages, not a complete offline map or live forecasts. Reconnect for current information.
 - Rate limits are held in memory, capped per instance, and keyed from `X-Forwarded-For`. Use a trusted proxy that replaces this header and shared gateway limits before scaling or exposing the service publicly.
-- Risk caches and pending-report re-screening run in each server process. Pending reports are re-screened in small batches during report-list refreshes; this is not a durable moderation queue.
+- Risk caches and report re-screening run in each server process. Report-list refreshes re-screen up to three reports in the background, prioritizing pending reports and then approved reports missing photo analysis; this is not a durable moderation queue.
 - Regression tests isolate external services with mocks; they do not validate live Azure permissions, database row locks, model availability, or device push delivery. Validate these in your deployment environment.
 - Check the terms, attribution, and quotas for Open-Meteo, map tile providers, and the Gemini API before production use; the code notes Open-Meteo's keyless non-commercial service.
 
