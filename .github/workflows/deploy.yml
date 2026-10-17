@@ -1,6 +1,7 @@
 # Builds the image and rolls it out to Azure Container Apps on every push to master.
 # Azure sign-in is OIDC (no secrets): the id-floodguard-deploy managed identity trusts this
-# repo's master branch and has AcrPush on the registry and Contributor on the container app.
+# repo's master branch (subject repo:DarkerMinecraft@20930466/FloodGuard@1423600447:ref:refs/heads/master)
+# and has AcrPush on the registry and Contributor on the container app.
 # Repository variables: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
 # NEXT_PUBLIC_MAPTILER_KEY, NEXT_PUBLIC_VAPID_PUBLIC_KEY (public values, inlined at build).
 name: Deploy
